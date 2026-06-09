@@ -78,3 +78,29 @@ export type Session = {
   mode?: SESSION_MODES;
   status?: "processing" | "completed" | "error";
 };
+
+enum SESSION_STATUS {
+  NOT_STARTED = "Not Started",
+  PROCESSING = "Processing",
+  COMPLETED = "Completed",
+  FAILED = "Failed"
+}
+
+interface SessionDocument {
+  mimeType: string;
+  filename: string;
+}
+
+interface SessionSheet {
+  filename: string;
+  data: string;
+}
+
+interface _Session {
+  id: string;
+  createdAt: string;
+  mode: SESSION_MODES;
+  status: SESSION_STATUS;
+  document: SessionDocument;
+  sheet: SessionSheet;
+}

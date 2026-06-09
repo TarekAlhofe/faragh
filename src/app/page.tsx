@@ -31,6 +31,8 @@ import Script from 'next/script';
 import Sidebar from '@/components/Sidebar';
 import React from 'react';
 import { HistoryDrawer } from '@/components/ui/history-drawer';
+import { useDocumentsStore } from '@/lib/stores/documentsStore'
+import { useSessionsStore } from '@/lib/stores/sessionsStore';
 
 export const dynamic = "force-dynamic";
 
@@ -53,134 +55,60 @@ export default function Home() {
   const [progressDetails, setProgressDetails] = useState<LineRow[] | ForeignNameRow[] | null>(null);
   const [selectedMode, setSelectedMode] = useState<SESSION_MODES | null>(SESSION_MODES.NAMES);
   const [pdfJs, setPdfJs] = useState<PDFJs | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [isSessionsLoading, setIsSessionsLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
+  const documentsStore = useDocumentsStore();
+  const sessionsStore = useSessionsStore();
 
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const urlSessionId = useMemo(() => searchParams.get('sessionId'), [searchParams]);
+
+  // Sync URL with sessionId state
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    const currentUrlSessionId = params.get('sessionId');
+
+    if (sessionId) {
+      if (currentUrlSessionId !== sessionId) {
+        params.set('sessionId', sessionId);
+        router.push(`${pathname}?${params.toString()}`, { scroll: false });
+      }
+    } else if (currentUrlSessionId) {
+      params.delete('sessionId');
+      const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+      router.push(newUrl, { scroll: false });
+    }
+  }, [sessionId, pathname, router, searchParams]);
 
   const modes = [
     { value: SESSION_MODES.NAMES, title: "الأسماء" },
     { value: SESSION_MODES.LINES, title: "الجمل" }
   ]
 
-  const fetchSessions = async () => {
-    try {
-      setIsSessionsLoading(true);
-      const res = await fetch('/api/sessions');
-      const data = await res.json();
-      setSessions(data.sessions || []);
-    } catch (err) {
-      console.error('Failed to fetch sessions:', err);
-    } finally {
-      setIsSessionsLoading(false);
-    }
-  };
 
+  // Rehydrate session once page is fully loaded.
   useEffect(() => {
-    fetchSessions();
-  }, []);
 
-  // useEffect(() => {
-  //   const hasActive = sessions.some(
-  //     s => s.status !== 'completed' && s.status !== 'error'
-  //   );
-  //   if (!hasActive || !isProcessing) return;
+    if (!sessionId || !pdfJs) return;
 
-  //   const interval = setInterval(fetchSessions, 3000);
-  //   return () => clearInterval(interval);
-  // }, [sessions, isProcessing]);
+    (async () => {
+      const sessionDocument = await documentsStore.getOneDocument(sessionId);
+      setFile(sessionDocument);
+    })();
 
+  }, [])
+
+  // Update File data when its loaded
   useEffect(() => {
-    console.info("PDF.js loaded:", pdfJs?.version);
-    console.info("Next.js version:", nextJsVersion.version);
-
-    // Initial Rehydration from URL
-    if (urlSessionId && pdfJs && !sessionId) {
-      const rehydrate = async () => {
-        try {
-          setIsUploading(true);
-          const res = await fetch(`/api/sessions/${urlSessionId}/status`);
-          if (!res.ok) {
-            console.warn("Session not found:", urlSessionId);
-            toaster.create({
-              title: 'الجلسة غير موجودة',
-              description: 'قد تكون محذوفة أو منتهية',
-              type: 'warning',
-              duration: 3000,
-            });
-            setSessions(prev => prev.filter(s => s.id !== urlSessionId));
-            handleReset();
-            return;
-          }
-          const data = await res.json();
-
-          // Fetch the PDF file
-          const pdfRes = await fetch(`/api/sessions/${urlSessionId}/pdf`);
-          if (pdfRes.status === 404) {
-            toaster.create({
-              title: 'ملف PDF غير متاح',
-              type: 'error',
-              duration: 10000,
-              action: {
-                label: 'حذف الجلسة',
-                onClick: () => handleDeleteSession(urlSessionId)
-              }
-            });
-          }
-          let rehydratedFile = null;
-          if (pdfRes.ok) {
-            const blob = await pdfRes.blob();
-            rehydratedFile = new File([blob], data.pdfFilename, { type: 'application/pdf' });
-            setFile(rehydratedFile);
-          }
-
-          setSessionId(urlSessionId);
-          setSelectedMode(data.mode ?? SESSION_MODES.NAMES);
-          setProgressDetails(data.sheet);
-
-          if (data.status === 'completed') {
-            setIsDone(true);
-            setProgress(100);
-          } else if (data.status === 'processing') {
-            setIsProcessing(true);
-            setIsDone(false);
-            setProgress(data.progress || 0);
-          } else {
-            setIsDone(false);
-            setProgress(data.progress || 0);
-          }
-
-          if (pdfJs && rehydratedFile) {
-            const pdf = await pdfJs.getDocument({ data: await (rehydratedFile as File).arrayBuffer() }).promise;
-            setTotalPages(pdf.numPages);
-            setEndPage(pdf.numPages);
-            if (data.processedPages && data.processedPages.length > 0 && data.status !== 'completed') {
-              const maxPage = Math.max(...data.processedPages);
-              if (maxPage < pdf.numPages) {
-                setStartPage(maxPage + 1);
-              } else {
-                setStartPage(pdf.numPages);
-              }
-            } else {
-              setStartPage(1);
-            }
-            pdf.destroy();
-          }
-          document.title = `فراغ استوديو | ${data.pdfFilename.replace(".pdf", "")}`
-
-          setIsUploading(false);
-        } catch (err) {
-          console.error("Rehydration failed:", err);
-          setIsUploading(false);
-        }
-      };
-      rehydrate();
-    }
-  }, [pdfJs, urlSessionId]);
+    (async () => {
+      if (!file) return;
+      const pdf = await pdfJs?.getDocument({ data: await file.arrayBuffer() }).promise;
+      if (!pdf) return;
+      setTotalPages(pdf.numPages);
+      setEndPage(pdf.numPages);
+      document.title = `فراغ استوديو | ${file.name.replace(".pdf", "")}`
+    })()
+  }, [file])
 
   useEffect(() => {
     if (!sessionId) return;
@@ -239,37 +167,24 @@ export default function Home() {
   }, [sessionId, isUploading, isProcessing]);
 
   const handleFileChange = async (details: { acceptedFiles: File[] }) => {
-    const file = details.acceptedFiles[0];
-    if (!file || !pdfJs) return;
-    // setIsUploading(true);
+    const newDocument = details.acceptedFiles[0];
+    if (!newDocument || !pdfJs) return;
 
+    if (newDocument && pdfJs) {
 
-    if (file && pdfJs) {
       try {
+
         setIsUploading(true);
 
-        const draftId = crypto.randomUUID();
-        draftFiles.set(draftId, file);
 
-        const pdf = await pdfJs.getDocument({ data: await file.arrayBuffer() }).promise;
-        setSessionId(draftId);
-        setTotalPages(pdf.numPages);
-        setEndPage(pdf.numPages);
-        pdf.destroy();
-        setFile(file);
+        const newSession = await sessionsStore.createSession({ filename: newDocument.name });
+
+        setSessionId(newSession.id);
+
+        documentsStore.cacheDocument(newSession.id, newDocument);
+
+        setFile(newDocument);
         setIsUnsavedSession(true);
-        document.title = `فراغ استوديو | ${file.name.replace(".pdf", "")}`
-
-        // Update URL with session ID
-        const params = new URLSearchParams(searchParams.toString());
-        params.set('sessionId', draftId);
-        router.push(`${pathname}?${params.toString()}`, { scroll: false });
-
-        setSessions(prev => {
-          if (prev.find(s => s.id === draftId)) return prev;
-          return [{ id: draftId, filename: file.name, createdAt: Date.now() }, ...prev]
-        });
-
         setIsUploading(false);
 
       } catch (error) {
@@ -285,13 +200,12 @@ export default function Home() {
     }
   };
 
-  const updateSessionStatus = (id: string | null, status: Session['status']) => {
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, status } : s));
-  };
-
   const handleConvert = async () => {
+
     if (!sessionId) return;
-    updateSessionStatus(sessionId, 'processing')
+
+    // updateSessionStatus(sessionId, 'processing')
+
     if (!file) {
       toaster.create({
         title: 'No file selected',
@@ -310,54 +224,29 @@ export default function Home() {
     }
 
 
-    let acctiveSessionId = sessionId;
-
-    if (isUnsavedSession) {
-      const draftFil = draftFiles.get(sessionId);
-      if (!draftFil) {
+    try {
+      const document = await documentsStore.getOneDocument(sessionId);
+      if (!document) {
         toaster.create({ title: 'الملف غير موجود', type: 'error', duration: 3000 });
         return;
       }
-      try {
-        const formData = new FormData();
-        formData.append('file', draftFil);
-        const { sessionId: newSessionId } = await fetch(`/api/sessions`, {
-          method: "POST",
-          body: formData
-        }).then(res => res.json());
-
-        acctiveSessionId = newSessionId;
-
-        // Update URL with session ID
-        const params = new URLSearchParams(searchParams.toString());
-        params.set('sessionId', newSessionId);
-        router.push(`${pathname}?${params.toString()}`, { scroll: false });
-
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId
-            ? { ...s, id: newSessionId }
-            : s
-        ));
-
-        // updateSessionStatus(newSessionId, 'completed')
-
-        draftFiles.delete(sessionId);
-        setSessionId(newSessionId);
-        setIsUnsavedSession(false);
-
-      } catch (error) {
-        if (error instanceof Error) {
-          toaster.create({
-            title: 'خطأ في إنشاء الجلسة',
-            description: error.message,
-            type: 'error',
-            duration: 3000,
-          });
-        }
+      const formData = new FormData();
+      formData.append('file', document);
+      const { sessionId: newSessionId } = await fetch(`/api/sessions`, {
+        method: "POST",
+        body: formData
+      }).then(res => res.json());
+      draftFiles.delete(sessionId);
+    } catch (error) {
+      if (error instanceof Error) {
+        toaster.create({
+          title: 'خطأ في إنشاء الجلسة',
+          description: error.message,
+          type: 'error',
+          duration: 3000,
+        });
       }
     }
-
-
 
     setIsUploading(true);
 
@@ -370,7 +259,7 @@ export default function Home() {
       formData.append('file', file);
 
       const request = await fetch(
-        `/api/sessions/${acctiveSessionId}?startPage=${startPage}&endPage=${endPage}&mode=${selectedMode}`,
+        `/api/sessions/${sessionId}?startPage=${startPage}&endPage=${endPage}&mode=${selectedMode}`,
         {
           method: 'POST',
           body: formData
@@ -398,7 +287,7 @@ export default function Home() {
       if (request.ok) {
         setSheetUrl(response.sheetUrl);
         setIsDone(true);
-        updateSessionStatus(acctiveSessionId, 'completed')
+        updateSessionStatus(sessionId, 'completed')
         toaster.create({
           title: `تم تفريغ كتاب "${file.name.replace('.pdf', '')}" بنجاح!`,
           description: `اضغط على زر "تحميل الملف" لتنزيل الملف`,
@@ -492,7 +381,6 @@ export default function Home() {
 
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = "extraction.xlsx";
     link.click();
 
     toaster.create({
@@ -530,11 +418,6 @@ export default function Home() {
 
     resetLocalState();
     setSelectedMode(SESSION_MODES.NAMES);
-
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete('sessionId');
-    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
-    router.push(newUrl, { scroll: false });
   };
 
   const handleDeleteSession = async (id: string) => {
@@ -596,9 +479,6 @@ export default function Home() {
         setIsUnsavedSession(true);
         pdf.destroy();
 
-        params.set('sessionId', id);
-        router.push(`${pathname}?${params.toString()}`, { scroll: false });
-
       } catch (error) {
         toaster.create({
           title: 'خطأ في تحميل الملف',
@@ -610,8 +490,7 @@ export default function Home() {
     }
 
 
-    params.set('sessionId', id);
-    router.push(`${pathname}?${params.toString()}`, { scroll: false });
+    setSessionId(id);
     console.log('Select a session', id);
   };
 
@@ -626,8 +505,7 @@ export default function Home() {
             justifyContent={'flex-start'}>
             <HistoryDrawer
               sessionId={sessionId}
-              sessions={sessions}
-              isSessionsLoading={isSessionsLoading}
+              sessions={sessionsStore.getAllSessions()}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
               onNewSession={handleReset} />

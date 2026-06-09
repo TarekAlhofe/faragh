@@ -61,21 +61,21 @@ export async function useScanner(
   ];
 }
 
-export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[LineRow[], (key: number, image: string, previousResults?: any[]) => Promise<LineRow[]>]> {
+export async function useCharacterLinesExtractor(startingSheet: LineRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[LineRow[], (key: number, image: string, previousResults?: any[]) => Promise<LineRow[]>]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
-  const sheet: LineRow[] = [];
+  const sheet: LineRow[] = startingSheet;
   const instructions = await fs.readFile(path.join('src/lib/prompts', 'sheetify.md'), 'utf-8');
 
-  async function extract(key: number, image: string, previousResults: any[] = []): Promise<LineRow[]> {
+  async function extract(key: number, image: string): Promise<LineRow[]> {
 
     const messages: any[] = [
       { role: "system", content: instructions }
     ];
 
-    if (previousResults.length > 0) {
+    if (sheet.length > 0) {
       messages.push({
         role: "user",
-        content: `Here are the results from previous pages for context (to maintain consistency and avoid duplicates):\n${JSON.stringify(previousResults.slice(-50))}`
+        content: `Here are the results from previous pages for context (to maintain consistency and avoid duplicates):\n${JSON.stringify(sheet.slice(-50))}`
       });
       messages.push({
         role: "assistant",
@@ -166,7 +166,7 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
     );
 
     try {
-      sheet.push(...lines);
+      sheet.push(...lines.sort((a, b) => (a['رقم الصفحة'] - b['رقم الصفحة']) || (a['رقم النص'] - b['رقم النص'])));
     } catch (err) {
       console.error(
         "Failed to parse assistant response:",
@@ -182,9 +182,9 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
   return [sheet, extract] as const;
 }
 
-export async function useForeignNamesExtractor({ readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
+export async function useForeignNamesExtractor(cachedSheet: ForeignNameRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
-  const sheet: ForeignNameRow[] = [];
+  const sheet: ForeignNameRow[] = cachedSheet;
   const instructions = await fs.readFile(path.join('src/lib/prompts', 'foreign-name-extraction.md'), 'utf-8');
 
   async function extract(key: number, image: string, previousResults: any[] = []): Promise<ForeignNameRow[]> {

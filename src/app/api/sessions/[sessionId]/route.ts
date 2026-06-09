@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ForeignNameRow, LineRow, SESSION_MODES, SESSION_STAGES, SessionProgress, SheetFile } from "@/lib/types";
-import { useForeignNamesExtractor, useScanner, useSheeter } from "@/lib/serverHooks";
+import { useCharacterLinesExtractor, useForeignNamesExtractor, useScanner } from "@/lib/serverHooks";
 import { convertToXLSX, filterSimilarEnglishNames, limitConcurrency, normalizeEnglishName, parallelReading } from "@/lib/utils";
 import { getRedis } from "@/lib/redis";
 import fs from "fs/promises";
@@ -44,28 +44,21 @@ export async function POST(
   const { sessionId } = await params;
   const formData = await req.formData();
   const file = formData.get("file") as File;
-  let sheetFile: SheetFile<ForeignNameRow> | SheetFile<LineRow> = { pdfFilename: file?.name || "unknown.pdf", sheet: [] };
   let processedPages: number[] = [];
 
   console.log(`[POST] file:`, file.name);
   console.log(`[POST] file:`, file);
 
-  const existingSheet = await getRedis().get(`${sessionId}/sheet`);
-  if (existingSheet) {
+  const cachedSheet = await getRedis().get(`${sessionId}/sheet`);
+  const cachedState = await getRedis().get(`${sessionId}/state`);
+  if (cachedState) {
     try {
-      sheetFile = JSON.parse(existingSheet);
+      processedPages = JSON.parse(cachedState).processedPages || [];
     } catch { }
   }
 
-  const existingState = await getRedis().get(`${sessionId}/state`);
-  if (existingState) {
-    try {
-      processedPages = JSON.parse(existingState).processedPages || [];
-    } catch { }
-  }
-
-  console.log(`[POST] existingSheet:`, existingSheet);
-  console.log(`[POST] existingState:`, existingState);
+  // console.log(`[POST] existingSheet:`, existingSheet);
+  // console.log(`[POST] existingState:`, existingState);
 
   if (!file) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
 
@@ -144,17 +137,10 @@ export async function POST(
     if (!mode) return NextResponse.json({ error: "NO mode Selected" }, { status: 400 });
 
     if (mode === SESSION_MODES.NAMES) {
-      console.log(`[POST NAMES] Starting extraction...`);
 
-      const [_sheet, extract] = await useForeignNamesExtractor({ readingMemoryLimit: 1 });
-      if (!sheetFile || !sheetFile.sheet) {
-        sheetFile = { pdfFilename: file.name, sheet: [] };
-      } else {
-        sheetFile.pdfFilename = file.name;
-      }
-      console.log(`[POST NAMES] Initial sheet from extractor: ${sheetFile.sheet.length} rows`);
-
-      const seenNames = new Set<string>(); // Track normalized names we've already added
+      const sheet = JSON.parse(cachedSheet ?? "[]") as ForeignNameRow[];
+      const [sheetFile, extract] = await useForeignNamesExtractor(sheet, { readingMemoryLimit: 1 });
+      const seenNames = new Set<string>();
 
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
@@ -164,9 +150,7 @@ export async function POST(
       await limitConcurrency(5, pagesToProcess.map(i => async () => {
         signal.throwIfAborted();
         const image = images(i) as string;
-        // Pass a snapshot of the current sheet to maintain context without image bloat
-        const lines = await extract(i, image, sheetFile.sheet);
-
+        const lines = await extract(i, image, sheetFile);
         const validateLines = await Promise.all(
           lines.map(async line => {
             if (line["الرابط الأول"]) line["الرابط الأول"] = await validateLink(line["الرابط الأول"], signal);
@@ -176,7 +160,6 @@ export async function POST(
           })
         );
 
-        // Filter out duplicates
         const uniqueLines = validateLines.filter((line) => {
           const englishName = line["الإسم باللغة الأجنبية"] ?? "";
           const normalized = normalizeEnglishName(englishName);
@@ -191,7 +174,6 @@ export async function POST(
           sheetFile.sheet.push(...uniqueLines);
         }
 
-        sheetFile.sheet.sort((a, b) => (a['رقم الصفحة'] - b['رقم الصفحة']) || (a['رقم النص'] - b['رقم النص']));
         processedPages.push(i);
 
         // Update Redis
@@ -208,19 +190,18 @@ export async function POST(
       }));
 
       // Final save of the full sheet and state with mode
+      const finalSheet = JSON.stringify(sheetFile);
       await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
-      await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
+      await getRedis().set(`${sessionId}/sheet`, finalSheet, "EX", 60 * 60 * 5);
+
+      console.log(finalSheet);
 
     }
 
     if (mode === SESSION_MODES.LINES) {
 
-      const [_sheet, extract] = await useSheeter({ readingMemoryLimit: 1 });
-      if (!sheetFile || !sheetFile.sheet) {
-        sheetFile = { pdfFilename: file.name, sheet: [] };
-      } else {
-        sheetFile.pdfFilename = file.name;
-      }
+      const sheet = JSON.parse(cachedSheet ?? "[]") as LineRow[];
+      const [sheetFile, extractFromImage] = await useCharacterLinesExtractor(sheet, { readingMemoryLimit: 5 });
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
         if (!processedPages.includes(i)) pagesToProcess.push(i);
@@ -229,18 +210,10 @@ export async function POST(
       await limitConcurrency(5, pagesToProcess.map(i => async () => {
         signal.throwIfAborted();
         const image = images(i) as string;
-        // Pass a snapshot of the current sheet to maintain context without image bloat
-        const lines = await extract(i, image, sheetFile.sheet);
-        if (mode === SESSION_MODES.LINES) {
-          const sheetFile: SheetFile<LineRow> = { pdfFilename: file.name, sheet: [] };
-          sheetFile.sheet.push(...lines);
-        }
-        sheetFile.sheet.sort((a, b) => (a['رقم الصفحة'] - b['رقم الصفحة']) || (a['رقم النص'] - b['رقم النص']));
+        const lines = await extractFromImage(i, image);
         processedPages.push(i);
         await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
-        if (lines.length > 0) {
-          await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
-        }
+        if (lines.length > 0) await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
         await getRedis().set(`${sessionId}/progress`, JSON.stringify({
           stage: "EXTRACTING",
           cursor: i,
@@ -249,22 +222,11 @@ export async function POST(
         }));
       }));
 
-      // Final save of the full sheet and state with mode
+
       await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
       await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
-
     }
 
-    console.log(`[POST] Final sheet size: ${sheetFile.sheet.length} rows`);
-    console.log(`[POST] Saving to Redis at key: ${sessionId}/sheet`);
-
-    await getRedis().set(
-      `${sessionId}/sheet`,
-      JSON.stringify(sheetFile),
-      "EX",
-      60 * 60 * 5
-    );
-    // Use host header instead of origin to avoid 0.0.0.0 in Docker
     const protocol = req.nextUrl.protocol;
     const host = req.headers.get("host") || req.nextUrl.host;
     const sheetUrl = `${protocol}//${host}/api/sessions/${sessionId}`;
@@ -278,23 +240,13 @@ export async function POST(
     if (error.name === "AbortError") {
       console.log(`[POST] Client connection aborted for sessionId: ${sessionId}`);
       await updateSessionStatus(sessionId, 'error')
-      // Force final save before exiting
       await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages }), "EX", 60 * 60 * 5);
-      await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
       return new NextResponse("Client connection aborted", { status: 499 });
     }
 
     if (error.type === "GEMINI_INVALID_INPUT") {
       return NextResponse.json({ type: "GEMINI_INVALID_INPUT" }, { status: 400 });
     }
-
-    await getRedis().set(
-      `${sessionId}/sheet`,
-      JSON.stringify(sheetFile),
-      "EX",
-      60 * 60 * 5
-    );
-    // Use host header instead of origin to avoid 0.0.0.0 in Docker
     const protocol = req.nextUrl.protocol;
     const host = req.headers.get("host") || req.nextUrl.host;
     const sheetUrl = `${protocol}//${host}/api/sessions/${sessionId}`;
@@ -333,9 +285,9 @@ export async function GET(
     });
   }
 
-  let sheetFile: SheetFile<ForeignNameRow>;
+  let sheetFile: ForeignNameRow[];
   try {
-    sheetFile = JSON.parse(sheetFileContent) as SheetFile<ForeignNameRow>;
+    sheetFile = JSON.parse(sheetFileContent) as ForeignNameRow[];
   } catch (error: unknown) {
     return new Response(JSON.stringify({ error: "Invalid JSON data" }), {
       status: 500,
@@ -343,32 +295,14 @@ export async function GET(
     });
   }
 
-  const { pdfFilename, sheet } = sheetFile;
-
-  // Ensure jsonData is an array
-  const dataArray = Array.isArray(sheet) ? sheet : [sheet];
-
-  console.log(`[GET /api/sessions/${sessionId}] Starting download...`);
-  console.log(`[GET] Data array length BEFORE filter: ${dataArray.length}`);
-
-  // Sort by page and text number
-  dataArray.sort((a, b) => (a['رقم الصفحة'] - b['رقم الصفحة']) || (a['رقم النص'] - b['رقم النص']));
-
-  const filtered = filterSimilarEnglishNames(dataArray);
-
-  console.log(`[GET] Data array length AFTER filter: ${filtered.length}`);
-  console.log(`[GET] Removed ${dataArray.length - filtered.length} duplicate rows`);
-
-  const xlsxBuffer = convertToXLSX(filtered);
-
-  const filename = `${pdfFilename.replace(".pdf", "")}.xlsx`;
+  const xlsxBuffer = convertToXLSX(sheetFile);
 
   return new Response(new Uint8Array(xlsxBuffer), {
     status: 200,
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${encodeURIComponent(
-        filename
+        "test.xlsx"
       )}"`,
     },
   });

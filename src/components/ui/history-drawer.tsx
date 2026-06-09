@@ -8,14 +8,12 @@ import type { Session } from '@/lib/types';
 export const HistoryDrawer = React.memo(({
     sessionId,
     sessions,
-    isSessionsLoading,
     onSelectSession,
     onDeleteSession,
     onNewSession
 }: {
     sessionId: string | null;
-    sessions: Session[];
-    isSessionsLoading: boolean;
+    sessions: Promise<Session[]>;
     onSelectSession: (id: string) => void;
     onDeleteSession: (id: string) => void;
     onNewSession: () => void;
@@ -48,7 +46,6 @@ export const HistoryDrawer = React.memo(({
                             <Sidebar
                                 currentSessionId={sessionId}
                                 sessions={sessions}
-                                isLoading={isSessionsLoading}
                                 onSelectSession={onSelectSession}
                                 onDeleteSession={onDeleteSession}
                                 onNewSession={onNewSession}

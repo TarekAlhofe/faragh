@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { Suspense, use, useEffect, useState } from 'react';
 import {
   Box,
   VStack,
@@ -9,21 +9,22 @@ import {
   Spinner,
   Badge,
   IconButton,
-  Button
+  Button,
+  Skeleton
 } from '@chakra-ui/react';
 import { Session } from '@/lib/types';
 import { LuBook, LuHistory, LuPlus, LuBookPlus, LuTrash2 } from 'react-icons/lu';
 
 interface SidebarProps {
   currentSessionId: string | null;
-  sessions: Session[];
-  isLoading: boolean;
+  sessions: Promise<Session[]>;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onNewSession: () => void;
 }
 
-export default function Sidebar({ currentSessionId, sessions, isLoading, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
+export default function Sidebar({ currentSessionId, sessions, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
+  const fetchedSessions = use(sessions);
 
   return (
     <Box
@@ -72,16 +73,19 @@ export default function Sidebar({ currentSessionId, sessions, isLoading, onSelec
           '&::-webkit-scrollbar-thumb': { background: '#2D3748', borderRadius: '10px' },
         }}
       >
-        {isLoading ? (
-          <VStack py={10}>
-            <Spinner size="sm" color="blue.400" />
-          </VStack>
-        ) : sessions.length === 0 ? (
-          <Text fontSize="sm" color="gray.500" textAlign="center" py={10}>
-            لا توجد سجلات بعد
-          </Text>
-        ) : (
-          sessions.map((session) => (
+        <Suspense fallback={
+          <>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton
+                key={i}
+                h={20}
+                rounded="md"
+                caretColor="whiteAlpha.100"
+              />
+            ))}
+          </>
+        }>
+          {fetchedSessions.map((session) => (
             <Box
               key={session.id}
               p={3}
@@ -152,8 +156,8 @@ export default function Sidebar({ currentSessionId, sessions, isLoading, onSelec
                 </HStack>
               </VStack>
             </Box>
-          ))
-        )}
+          ))}
+        </Suspense>
       </VStack>
 
       <Box p={4} borderTop="1px solid" borderColor="gray.800">
