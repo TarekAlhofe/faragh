@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ForeignNameRow, LineRow, SESSION_MODES, SESSION_STAGES, SessionProgress, SheetFile } from "@/lib/types";
-import { useCharacterLinesExtractor, useForeignNamesExtractor, useScanner } from "@/lib/serverHooks";
+import { useSpeakerLinesExtractor, useForeignNamesExtractor, useScanner } from "@/lib/serverHooks";
 import { convertToXLSX, filterSimilarEnglishNames, limitConcurrency, normalizeEnglishName, parallelReading } from "@/lib/utils";
 import { getRedis } from "@/lib/redis";
 import fs from "fs/promises";
@@ -113,11 +113,13 @@ export async function POST(
       );
     }
 
-    const [images, numberOfPages, scan] = await useScanner(file);
+    const [images, numberOfPages, scan] = await useScanner(file, 1.2);
+    const scanStartPage = mode === SESSION_MODES.LINES ? Math.max(1, startPage - 3) : startPage;
+    const scanEndPage = mode === SESSION_MODES.LINES ? Math.min(numberOfPages, endPage + 3) : endPage;
     const scannedPages: number[] = [];
     const pagesToScan = [];
-    for (let pageNum = 1; pageNum <= numberOfPages; pageNum++) {
-      if (pageNum >= startPage && pageNum <= endPage && !processedPages.includes(pageNum)) {
+    for (let pageNum = scanStartPage; pageNum <= scanEndPage; pageNum++) {
+      if (!images(pageNum)) {
         pagesToScan.push(pageNum);
       }
     }
@@ -194,34 +196,38 @@ export async function POST(
       await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
       await getRedis().set(`${sessionId}/sheet`, finalSheet, "EX", 60 * 60 * 5);
 
-      console.log(finalSheet);
-
     }
 
     if (mode === SESSION_MODES.LINES) {
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as LineRow[];
-      const [sheetFile, extractFromImage] = await useCharacterLinesExtractor(sheet, { readingMemoryLimit: 5 });
+      const cachedSpeakers = await getRedis().get(`${sessionId}/speakers`) || "";
+      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sheet, cachedSpeakers, { readingMemoryLimit: 5 });
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
         if (!processedPages.includes(i)) pagesToProcess.push(i);
       }
+      // Process pages sequentially in ascending order to maintain correct memory propagation
+      pagesToProcess.sort((a, b) => a - b);
 
-      await limitConcurrency(5, pagesToProcess.map(i => async () => {
+      let currentSpeakersState = currentSpeakers;
+      for (const i of pagesToProcess) {
         signal.throwIfAborted();
-        const image = images(i) as string;
-        const lines = await extractFromImage(i, image);
+        const { lines, updatedSpeakers } = await extractFromImage(i, images, numberOfPages, currentSpeakersState);
+        currentSpeakersState = updatedSpeakers;
         processedPages.push(i);
         await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
-        if (lines.length > 0) await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
+        if (lines.length > 0) {
+          await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
+        }
+        await getRedis().set(`${sessionId}/speakers`, currentSpeakersState, "EX", 60 * 60 * 5);
         await getRedis().set(`${sessionId}/progress`, JSON.stringify({
           stage: "EXTRACTING",
           cursor: i,
           progress: Math.round(((processedPages.length / totalPages) * 100)),
           details: JSON.stringify(lines)
         }));
-      }));
-
+      }
 
       await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
       await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
@@ -323,6 +329,7 @@ export async function DELETE(
   await getRedis().del(`${sessionId}/progress`);
   await getRedis().del(`${sessionId}/sheet`);
   await getRedis().del(`${sessionId}/state`);
+  await getRedis().del(`${sessionId}/speakers`);
 
   // Remove from index
   await getRedis().srem('sessions:index', sessionId);

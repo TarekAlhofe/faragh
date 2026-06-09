@@ -10,7 +10,7 @@ declare global {
 }
 
 export type LineRow = Row & {
-  ['الشخصية']: string;
+  ['صاحب الصوت']: string;
   ['النص']: string;
   ['النبرة']: string;
   ['المكان']: string;

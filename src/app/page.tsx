@@ -635,8 +635,8 @@ export default function Home() {
                       <Table.Row>
                         <Table.ColumnHeader>رقم الصفحة</Table.ColumnHeader>
                         <Table.ColumnHeader>رقم النص</Table.ColumnHeader>
-                        <Table.ColumnHeader>الشخصية</Table.ColumnHeader>
-                        <Table.ColumnHeader>النص</Table.ColumnHeader>
+                        <Table.ColumnHeader>المتحدث</Table.ColumnHeader>
+                        <Table.ColumnHeader>العبارة</Table.ColumnHeader>
                         <Table.ColumnHeader>النبرة</Table.ColumnHeader>
                         <Table.ColumnHeader>المكان</Table.ColumnHeader>
                         <Table.ColumnHeader>الخلفية الصوتية</Table.ColumnHeader>
@@ -661,8 +661,8 @@ export default function Home() {
                         <Table.Row key={index}>
                           <Table.Cell minWidth={{ base: '6rem', md: '8rem' }} whiteSpace={"wrap"}>{row['رقم الصفحة']}</Table.Cell>
                           <Table.Cell minWidth={{ base: '6rem', md: '8rem' }} whiteSpace={"wrap"}>{row['رقم النص']}</Table.Cell>
-                          <Table.Cell minWidth={{ base: '8rem', md: '12rem' }} whiteSpace={"wrap"}>{row['الشخصية']}</Table.Cell>
-                          <Table.Cell minWidth={{ base: '12rem', md: '20vw' }} whiteSpace={"wrap"}>{row['النص']}</Table.Cell>
+                          <Table.Cell minWidth={{ base: '8rem', md: '12rem' }} whiteSpace={"wrap"}>{row['المتحدث']}</Table.Cell>
+                          <Table.Cell minWidth={{ base: '12rem', md: '20vw' }} whiteSpace={"wrap"}>{row['العبارة']}</Table.Cell>
                           <Table.Cell minWidth={{ base: '8rem', md: '10vw' }} whiteSpace={"wrap"}>{row['النبرة']}</Table.Cell>
                           <Table.Cell minWidth={{ base: '6rem', md: '5vw' }} whiteSpace={"wrap"}>{row['المكان']}</Table.Cell>
                           <Table.Cell minWidth={{ base: '8rem', md: '7vw' }} whiteSpace={"wrap"}>{row['الخلفية الصوتية']}</Table.Cell>

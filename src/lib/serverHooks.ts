@@ -61,15 +61,141 @@ export async function useScanner(
   ];
 }
 
-export async function useCharacterLinesExtractor(startingSheet: LineRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[LineRow[], (key: number, image: string, previousResults?: any[]) => Promise<LineRow[]>]> {
+export async function useSpeakerLinesExtractor(
+  startingSheet: LineRow[],
+  startingSpeakers: string,
+  { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }
+): Promise<[
+  LineRow[],
+  string,
+  (
+    key: number,
+    images: (pageNumber?: number) => Record<number, string> | string,
+    numberOfPages: number,
+    currentSpeakers: string
+  ) => Promise<{ lines: LineRow[]; updatedSpeakers: string }>
+]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
   const sheet: LineRow[] = startingSheet;
-  const instructions = await fs.readFile(path.join('src/lib/prompts', 'sheetify.md'), 'utf-8');
+  const speakerInstructionsTemplate = await fs.readFile(path.join('src/lib/prompts', 'charactering.md'), 'utf-8');
+  const sheetifyInstructionsTemplate = await fs.readFile(path.join('src/lib/prompts', 'sheetify.md'), 'utf-8');
 
-  async function extract(key: number, image: string): Promise<LineRow[]> {
+  async function extract(
+    key: number,
+    images: (pageNumber?: number) => Record<number, string> | string,
+    numberOfPages: number,
+    currentSpeakers: string
+  ): Promise<{ lines: LineRow[]; updatedSpeakers: string }> {
+    // Step 1: Speaker Identification with surrounding page window [key - 3, key + 3]
+    const speakerInstructions = speakerInstructionsTemplate.replace('{{speakers}}', currentSpeakers);
+    
+    const contentParts: any[] = [];
+    for (let p = Math.max(1, key - 3); p <= Math.min(numberOfPages, key + 3); p++) {
+      const img = images(p) as string;
+      if (img) {
+        contentParts.push({
+          type: "text",
+          text: `[Page ${p}]${p === key ? ' (This is the target page to extract speakers for)' : ''}`
+        });
+        contentParts.push({
+          type: "image_url",
+          image_url: {
+            url: `data:image/jpeg;base64,${img}`,
+          }
+        });
+      }
+    }
+    contentParts.push({
+      type: "text",
+      text: `الرجاء تحليل الصفحة المستهدفة (الصفحة رقم ${key}) واستخراج المتحدثين الفاعلين فيها، مستعيناً بالصفحات السابقة واللاحقة المرفقة كالسياق.`
+    });
 
+    const charMessages: any[] = [
+      { role: "system", content: speakerInstructions },
+      {
+        role: 'user',
+        content: contentParts,
+      }
+    ];
+
+    console.log({ contentParts })
+
+    const charConfig = {
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "speakers_schema",
+          strict: true,
+          schema: {
+            type: "object",
+            required: ["characters"],
+            properties: {
+              characters: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["الاسم", "الوصف", "التصنيف"],
+                  properties: {
+                    "الاسم": { type: "string" },
+                    "الوصف": { type: "string" },
+                    "التصنيف": { type: "string", enum: ["رئيسية", "ثانوية", "مساندة/جماعية"] }
+                  },
+                  additionalProperties: false
+                }
+              }
+            },
+            additionalProperties: false
+          }
+        }
+      }
+    } as const;
+
+    const speakerModels = [
+      "google/gemini-3.5-flash",
+      "google/gemini-3.1-flash-lite",
+      "google/gemini-2.5-pro",
+      "google/gemini-2.5-flash"
+    ] as const;
+    let charResult: any;
+    for (const m of speakerModels) {
+      try {
+        charResult = await tryCall(async () => {
+          return await getAI().chat.completions.create({
+            model: m,
+            messages: charMessages,
+            ...charConfig,
+          });
+        });
+        break;
+      } catch (err) {
+        console.warn(`Model ${m} speaker extraction failed, trying next if available`, err);
+        if (m === speakerModels[speakerModels.length - 1]) throw err;
+      }
+    }
+
+    let updatedSpeakers = currentSpeakers;
+    const charMessageContent = charResult?.choices?.[0]?.message?.content;
+    console.log(charMessageContent);
+    if (charMessageContent) {
+      try {
+        const parsedChars = JSON.parse(charMessageContent);
+        if (parsedChars && Array.isArray(parsedChars.characters)) {
+          updatedSpeakers = parsedChars.characters
+            .map((c: any) => `${c["الاسم"]}: ${c["الوصف"]}. (${c["التصنيف"]})`)
+            .join("\n");
+        }
+      } catch (err) {
+        console.error("Failed to parse speakers list JSON output:", err);
+      }
+    }
+
+    console.log({ updatedSpeakers });
+
+    // Step 2: Utterances Extraction (uses target page only)
+    const targetImage = images(key) as string;
+    const sheetifyInstructions = sheetifyInstructionsTemplate.replace('{{speakers}}', updatedSpeakers);
     const messages: any[] = [
-      { role: "system", content: instructions }
+      { role: "system", content: sheetifyInstructions }
     ];
 
     if (sheet.length > 0) {
@@ -89,7 +215,7 @@ export async function useCharacterLinesExtractor(startingSheet: LineRow[], { rea
         {
           type: "image_url",
           image_url: {
-            url: `data:image/jpeg;base64,${image}`,
+            url: `data:image/jpeg;base64,${targetImage}`,
           }
         },
         {
@@ -114,15 +240,15 @@ export async function useCharacterLinesExtractor(startingSheet: LineRow[], { rea
                 items: {
                   type: "object",
                   required: [
-                    "الشخصية",
-                    "النص",
+                    "المتحدث",
+                    "العبارة",
                     "النبرة",
                     "المكان",
                     "الخلفية الصوتية",
                   ],
                   properties: {
-                    "الشخصية": { type: "string" },
-                    "النص": { type: "string" },
+                    "المتحدث": { type: "string" },
+                    "العبارة": { type: "string" },
                     "النبرة": { type: "string" },
                     "المكان": { type: "string" },
                     "الخلفية الصوتية": { type: "string" },
@@ -137,10 +263,13 @@ export async function useCharacterLinesExtractor(startingSheet: LineRow[], { rea
       }
     } as const;
 
-    // Fallback between flash and flash-lite models on failure
-    const models = ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite"] as const;
+    const sheetifyModels = [
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-flash-lite"
+    ] as const;
+
     let result: any;
-    for (const m of models) {
+    for (const m of sheetifyModels) {
       try {
         result = await tryCall(async () => {
           return await getAI().chat.completions.create({
@@ -151,8 +280,8 @@ export async function useCharacterLinesExtractor(startingSheet: LineRow[], { rea
         });
         break;
       } catch (err) {
-        console.warn(`Model ${m} failed, trying next if available`, err);
-        if (m === models[models.length - 1]) throw err;
+        console.warn(`Model ${m} lines extraction failed, trying next if available`, err);
+        if (m === sheetifyModels[sheetifyModels.length - 1]) throw err;
       }
     }
     const responseObject = handleConversation(result, conversation);
@@ -175,11 +304,11 @@ export async function useCharacterLinesExtractor(startingSheet: LineRow[], { rea
       );
     }
 
-    return lines;
+    return { lines, updatedSpeakers };
 
   }
 
-  return [sheet, extract] as const;
+  return [sheet, startingSpeakers, extract] as const;
 }
 
 export async function useForeignNamesExtractor(cachedSheet: ForeignNameRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
@@ -254,7 +383,7 @@ export async function useForeignNamesExtractor(cachedSheet: ForeignNameRow[], { 
       }
     } as const;
 
-    const model = "google/gemini-2.5-flash";
+    const model = "google/gemini-3.5-flash";
 
     const result = await tryCall(async () => {
       return await getAI().chat.completions.create({
