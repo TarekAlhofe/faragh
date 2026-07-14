@@ -8,14 +8,9 @@ RUN rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN corepack enable pnpm
-
 COPY package*.json ./
 
-COPY ./pnpm-lock.yaml ./
-RUN pnpm fetch
-
-RUN pnpm install
+RUN npm install
 
 COPY . .
 
