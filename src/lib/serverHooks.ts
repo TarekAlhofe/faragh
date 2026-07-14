@@ -64,6 +64,7 @@ export async function useScanner(
 export async function useSpeakerLinesExtractor(
   startingSheet: LineRow[],
   startingSpeakers: string,
+  numberOfPages: number,
   { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }
 ): Promise<[
   LineRow[],
@@ -71,7 +72,6 @@ export async function useSpeakerLinesExtractor(
   (
     key: number,
     images: (pageNumber?: number) => Record<number, string> | string,
-    numberOfPages: number,
     currentSpeakers: string
   ) => Promise<{ lines: LineRow[]; updatedSpeakers: string }>
 ]> {
@@ -83,7 +83,6 @@ export async function useSpeakerLinesExtractor(
   async function extract(
     key: number,
     images: (pageNumber?: number) => Record<number, string> | string,
-    numberOfPages: number,
     currentSpeakers: string
   ): Promise<{ lines: LineRow[]; updatedSpeakers: string }> {
     // Step 1: Speaker Identification with surrounding page window [key - 3, key + 3]
@@ -117,8 +116,6 @@ export async function useSpeakerLinesExtractor(
         content: contentParts,
       }
     ];
-
-    console.log({ contentParts })
 
     const charConfig = {
       response_format: {
@@ -175,7 +172,7 @@ export async function useSpeakerLinesExtractor(
 
     let updatedSpeakers = currentSpeakers;
     const charMessageContent = charResult?.choices?.[0]?.message?.content;
-    console.log(charMessageContent);
+
     if (charMessageContent) {
       try {
         const parsedChars = JSON.parse(charMessageContent);
@@ -188,8 +185,6 @@ export async function useSpeakerLinesExtractor(
         console.error("Failed to parse speakers list JSON output:", err);
       }
     }
-
-    console.log({ updatedSpeakers });
 
     // Step 2: Utterances Extraction (uses target page only)
     const targetImage = images(key) as string;
@@ -264,8 +259,8 @@ export async function useSpeakerLinesExtractor(
     } as const;
 
     const sheetifyModels = [
-      "google/gemini-2.5-flash",
-      "google/gemini-2.5-flash-lite"
+      "google/gemini-3.5-flash",
+      "google/gemini-3.1-flash-lite",
     ] as const;
 
     let result: any;

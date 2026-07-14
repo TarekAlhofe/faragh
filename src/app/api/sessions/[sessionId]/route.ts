@@ -202,7 +202,7 @@ export async function POST(
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as LineRow[];
       const cachedSpeakers = await getRedis().get(`${sessionId}/speakers`) || "";
-      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sheet, cachedSpeakers, { readingMemoryLimit: 5 });
+      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sheet, cachedSpeakers, numberOfPages, { readingMemoryLimit: 5 });
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
         if (!processedPages.includes(i)) pagesToProcess.push(i);
@@ -213,13 +213,11 @@ export async function POST(
       let currentSpeakersState = currentSpeakers;
       for (const i of pagesToProcess) {
         signal.throwIfAborted();
-        const { lines, updatedSpeakers } = await extractFromImage(i, images, numberOfPages, currentSpeakersState);
+        const { lines, updatedSpeakers } = await extractFromImage(i, images, currentSpeakersState);
         currentSpeakersState = updatedSpeakers;
         processedPages.push(i);
         await getRedis().set(`${sessionId}/state`, JSON.stringify({ processedPages, mode }), "EX", 60 * 60 * 5);
-        if (lines.length > 0) {
-          await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
-        }
+        await getRedis().set(`${sessionId}/sheet`, JSON.stringify(sheetFile), "EX", 60 * 60 * 5);
         await getRedis().set(`${sessionId}/speakers`, currentSpeakersState, "EX", 60 * 60 * 5);
         await getRedis().set(`${sessionId}/progress`, JSON.stringify({
           stage: "EXTRACTING",
