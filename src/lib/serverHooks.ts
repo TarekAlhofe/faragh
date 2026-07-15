@@ -7,6 +7,7 @@ import { ReadingMemory, tryCall } from "./utils";
 import { callAI, getAI, handleConversation } from "./ai";
 import { fromBuffer } from 'pdf2pic';
 import countPages from 'page-count';
+import { Scanner } from './scanner';
 
 export async function useScanner(
   pdf: File,
@@ -62,6 +63,7 @@ export async function useScanner(
 }
 
 export async function useSpeakerLinesExtractor(
+  sessionId: string,
   startingSheet: LineRow[],
   startingSpeakers: string,
   numberOfPages: number,
@@ -87,20 +89,16 @@ export async function useSpeakerLinesExtractor(
   ): Promise<{ lines: LineRow[]; updatedSpeakers: string }> {
     // Step 1: Speaker Identification with surrounding page window [key - 3, key + 3]
     const speakerInstructions = speakerInstructionsTemplate.replace('{{speakers}}', currentSpeakers);
+    const scanner = new Scanner(sessionId);
     
     const contentParts: any[] = [];
     for (let p = Math.max(1, key - 3); p <= Math.min(numberOfPages, key + 3); p++) {
       const img = images(p) as string;
       if (img) {
+        const textContent = await scanner.scanImage(p, img);
         contentParts.push({
           type: "text",
-          text: `[Page ${p}]${p === key ? ' (This is the target page to extract speakers for)' : ''}`
-        });
-        contentParts.push({
-          type: "image_url",
-          image_url: {
-            url: `data:image/jpeg;base64,${img}`,
-          }
+          text: `[Page ${p}]${p === key ? ' (This is the target page to extract speakers for)' : ''}\n${textContent}`
         });
       }
     }
@@ -188,6 +186,7 @@ export async function useSpeakerLinesExtractor(
 
     // Step 2: Utterances Extraction (uses target page only)
     const targetImage = images(key) as string;
+    const targetText = await scanner.scanImage(key, targetImage);
     const sheetifyInstructions = sheetifyInstructionsTemplate.replace('{{speakers}}', updatedSpeakers);
     const messages: any[] = [
       { role: "system", content: sheetifyInstructions }
@@ -208,14 +207,8 @@ export async function useSpeakerLinesExtractor(
       role: 'user',
       content: [
         {
-          type: "image_url",
-          image_url: {
-            url: `data:image/jpeg;base64,${targetImage}`,
-          }
-        },
-        {
           type: "text",
-          text: "Please extract the data from this page according to the instructions."
+          text: "Please extract the data from this page according to the instructions:\n\n" + targetText
         }
       ],
     });
@@ -306,12 +299,14 @@ export async function useSpeakerLinesExtractor(
   return [sheet, startingSpeakers, extract] as const;
 }
 
-export async function useForeignNamesExtractor(cachedSheet: ForeignNameRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
+export async function useForeignNamesExtractor(sessionId: string, cachedSheet: ForeignNameRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
   const sheet: ForeignNameRow[] = cachedSheet;
   const instructions = await fs.readFile(path.join('src/lib/prompts', 'foreign-name-extraction.md'), 'utf-8');
 
   async function extract(key: number, image: string, previousResults: any[] = []): Promise<ForeignNameRow[]> {
+    const scanner = new Scanner(sessionId);
+    const targetText = await scanner.scanImage(key, image);
 
     const messages: any[] = [
       { role: "system", content: instructions }
@@ -332,14 +327,8 @@ export async function useForeignNamesExtractor(cachedSheet: ForeignNameRow[], { 
       role: 'user',
       content: [
         {
-          type: "image_url",
-          image_url: {
-            url: `data:image/png;base64,${image}`,
-          }
-        },
-        {
           type: "text",
-          text: "Please extract the names from this page according to the instructions."
+          text: "Please extract the names from this page according to the instructions:\n\n" + targetText
         }
       ],
     });

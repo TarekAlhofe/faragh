@@ -141,7 +141,7 @@ export async function POST(
     if (mode === SESSION_MODES.NAMES) {
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as ForeignNameRow[];
-      const [sheetFile, extract] = await useForeignNamesExtractor(sheet, { readingMemoryLimit: 1 });
+      const [sheetFile, extract] = await useForeignNamesExtractor(sessionId, sheet, { readingMemoryLimit: 1 });
       const seenNames = new Set<string>();
 
       const pagesToProcess = [];
@@ -202,7 +202,7 @@ export async function POST(
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as LineRow[];
       const cachedSpeakers = await getRedis().get(`${sessionId}/speakers`) || "";
-      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sheet, cachedSpeakers, numberOfPages, { readingMemoryLimit: 5 });
+      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sessionId, sheet, cachedSpeakers, numberOfPages, { readingMemoryLimit: 5 });
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
         if (!processedPages.includes(i)) pagesToProcess.push(i);
