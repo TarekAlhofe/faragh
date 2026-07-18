@@ -235,10 +235,7 @@ export function encodeRFC5987ValueChars(filename: string) {
 // --- Cost tracking ---
 
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "google/gemini-3.5-flash":          { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
-  "google/gemini-3.1-flash-lite":     { input: 0.10 / 1_000_000, output: 0.40 / 1_000_000 },
-  "google/gemini-2.5-pro":            { input: 1.25 / 1_000_000, output: 10.00 / 1_000_000 },
-  "google/gemini-2.5-flash":          { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
+  "deepseek/deepseek-v4-flash": { input: 0.14 / 1_000_000, output: 0.28 / 1_000_000 },
 };
 
 export function calculateCost(model: string, usage: { prompt_tokens?: number; completion_tokens?: number } | undefined): number {

@@ -146,29 +146,21 @@ export async function useSpeakerLinesExtractor(
       }
     } as const;
 
-    const speakerModels = [
-      "google/gemini-3.5-flash",
-      "google/gemini-3.1-flash-lite",
-      "google/gemini-2.5-pro",
-      "google/gemini-2.5-flash"
-    ] as const;
+    const speakerModel = "deepseek/deepseek-v4-flash";
     let charResult: any;
-    for (const m of speakerModels) {
-      try {
-        charResult = await tryCall(async () => {
-          return await getAI().chat.completions.create({
-            model: m,
-            messages: charMessages,
-            ...charConfig,
-          });
+    try {
+      charResult = await tryCall(async () => {
+        return await getAI().chat.completions.create({
+          model: speakerModel,
+          messages: charMessages,
+          ...charConfig,
         });
-        const usageInfo = extractUsageFromResult(charResult);
-        if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
-        break;
-      } catch (err) {
-        console.warn(`Model ${m} speaker extraction failed, trying next if available`, err);
-        if (m === speakerModels[speakerModels.length - 1]) throw err;
-      }
+      });
+      const usageInfo = extractUsageFromResult(charResult);
+      if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
+    } catch (err) {
+      console.warn(`Model ${speakerModel} speaker extraction failed`, err);
+      throw err;
     }
 
     let updatedSpeakers = currentSpeakers;
@@ -254,28 +246,22 @@ export async function useSpeakerLinesExtractor(
       }
     } as const;
 
-    const sheetifyModels = [
-      "google/gemini-3.5-flash",
-      "google/gemini-3.1-flash-lite",
-    ] as const;
+    const sheetifyModel = "deepseek/deepseek-v4-flash";
 
     let result: any;
-    for (const m of sheetifyModels) {
-      try {
-        result = await tryCall(async () => {
-          return await getAI().chat.completions.create({
-            model: m,
-            messages: messages,
-            ...config,
-          });
+    try {
+      result = await tryCall(async () => {
+        return await getAI().chat.completions.create({
+          model: sheetifyModel,
+          messages: messages,
+          ...config,
         });
-        const usageInfo = extractUsageFromResult(result);
-        if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
-        break;
-      } catch (err) {
-        console.warn(`Model ${m} lines extraction failed, trying next if available`, err);
-        if (m === sheetifyModels[sheetifyModels.length - 1]) throw err;
-      }
+      });
+      const usageInfo = extractUsageFromResult(result);
+      if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
+    } catch (err) {
+      console.warn(`Model ${sheetifyModel} lines extraction failed`, err);
+      throw err;
     }
     const responseObject = handleConversation(result, conversation);
 
@@ -372,7 +358,7 @@ export async function useForeignNamesExtractor(sessionId: string, cachedSheet: F
       }
     } as const;
 
-    const model = "google/gemini-3.5-flash";
+    const model = "deepseek/deepseek-v4-flash";
 
     const result = await tryCall(async () => {
       return await getAI().chat.completions.create({
