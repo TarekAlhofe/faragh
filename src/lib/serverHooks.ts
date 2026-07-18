@@ -5,6 +5,7 @@ import { ForeignNameRow, LineRow, Row } from '@/lib/types';
 import { ReadingMemory, tryCall } from "./utils";
 
 import { callAI, getAI, handleConversation } from "./ai";
+import { CostTracker, extractUsageFromResult } from "./utils";
 import { fromBuffer } from 'pdf2pic';
 import countPages from 'page-count';
 import { Scanner } from './scanner';
@@ -67,7 +68,7 @@ export async function useSpeakerLinesExtractor(
   startingSheet: LineRow[],
   startingSpeakers: string,
   numberOfPages: number,
-  { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }
+  { readingMemoryLimit, costTracker }: { readingMemoryLimit: number; costTracker?: CostTracker } = { readingMemoryLimit: 10 }
 ): Promise<[
   LineRow[],
   string,
@@ -161,6 +162,8 @@ export async function useSpeakerLinesExtractor(
             ...charConfig,
           });
         });
+        const usageInfo = extractUsageFromResult(charResult);
+        if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
         break;
       } catch (err) {
         console.warn(`Model ${m} speaker extraction failed, trying next if available`, err);
@@ -266,6 +269,8 @@ export async function useSpeakerLinesExtractor(
             ...config,
           });
         });
+        const usageInfo = extractUsageFromResult(result);
+        if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
         break;
       } catch (err) {
         console.warn(`Model ${m} lines extraction failed, trying next if available`, err);
@@ -299,7 +304,7 @@ export async function useSpeakerLinesExtractor(
   return [sheet, startingSpeakers, extract] as const;
 }
 
-export async function useForeignNamesExtractor(sessionId: string, cachedSheet: ForeignNameRow[], { readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
+export async function useForeignNamesExtractor(sessionId: string, cachedSheet: ForeignNameRow[], { readingMemoryLimit, costTracker }: { readingMemoryLimit: number; costTracker?: CostTracker } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
   const sheet: ForeignNameRow[] = cachedSheet;
   const instructions = await fs.readFile(path.join('src/lib/prompts', 'foreign-name-extraction.md'), 'utf-8');
@@ -376,6 +381,8 @@ export async function useForeignNamesExtractor(sessionId: string, cachedSheet: F
         ...config,
       });
     });
+    const usageInfo = extractUsageFromResult(result);
+    if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
     const responseObject = handleConversation(result, conversation);
 
     const lines: ForeignNameRow[] = responseObject.map(

@@ -69,6 +69,7 @@ export type SessionProgress<T> = {
   cursor: number;
   progress: number;
   details: T;
+  cost: number;
 }
 
 export type Session = {

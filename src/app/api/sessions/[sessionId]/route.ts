@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ForeignNameRow, LineRow, SESSION_MODES, SESSION_STAGES, SessionProgress, SheetFile } from "@/lib/types";
 import { useSpeakerLinesExtractor, useForeignNamesExtractor, useScanner } from "@/lib/serverHooks";
-import { convertToXLSX, filterSimilarEnglishNames, limitConcurrency, normalizeEnglishName, parallelReading } from "@/lib/utils";
+import { convertToXLSX, filterSimilarEnglishNames, limitConcurrency, normalizeEnglishName, parallelReading, createCostTracker } from "@/lib/utils";
 import { getRedis } from "@/lib/redis";
 import fs from "fs/promises";
 import path from "path";
@@ -99,7 +99,8 @@ export async function POST(
 
     const totalPages = endPage - startPage + 1;
     const contentType = req.headers.get("content-type") || "";
-    const sessionProgress: SessionProgress<{}> = { stage: SESSION_STAGES.IDLE, cursor: 1, progress: 0, details: [] }
+    const costTracker = createCostTracker();
+    const sessionProgress: SessionProgress<{}> = { stage: SESSION_STAGES.IDLE, cursor: 1, progress: 0, details: [], cost: 0 }
 
     await getRedis().set(
       `${sessionId}/progress`,
@@ -132,7 +133,8 @@ export async function POST(
         stage: "SCANNING",
         cursor: pageNum,
         progress: Math.floor((scannedPages.length / pagesToScan.length) * 100),
-        details: ""
+        details: "",
+        cost: costTracker.getTotal()
       }));
     }));
 
@@ -141,7 +143,7 @@ export async function POST(
     if (mode === SESSION_MODES.NAMES) {
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as ForeignNameRow[];
-      const [sheetFile, extract] = await useForeignNamesExtractor(sessionId, sheet, { readingMemoryLimit: 1 });
+      const [sheetFile, extract] = await useForeignNamesExtractor(sessionId, sheet, { readingMemoryLimit: 1, costTracker });
       const seenNames = new Set<string>();
 
       const pagesToProcess = [];
@@ -187,7 +189,8 @@ export async function POST(
           stage: "EXTRACTING",
           cursor: i,
           progress: Math.round(((processedPages.length / totalPages) * 100)),
-          details: JSON.stringify(uniqueLines)
+          details: JSON.stringify(uniqueLines),
+          cost: costTracker.getTotal()
         }));
       }));
 
@@ -202,7 +205,7 @@ export async function POST(
 
       const sheet = JSON.parse(cachedSheet ?? "[]") as LineRow[];
       const cachedSpeakers = await getRedis().get(`${sessionId}/speakers`) || "";
-      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sessionId, sheet, cachedSpeakers, numberOfPages, { readingMemoryLimit: 5 });
+      const [sheetFile, currentSpeakers, extractFromImage] = await useSpeakerLinesExtractor(sessionId, sheet, cachedSpeakers, numberOfPages, { readingMemoryLimit: 5, costTracker });
       const pagesToProcess = [];
       for (let i = startPage; i <= endPage; i++) {
         if (!processedPages.includes(i)) pagesToProcess.push(i);
@@ -223,7 +226,8 @@ export async function POST(
           stage: "EXTRACTING",
           cursor: i,
           progress: Math.round(((processedPages.length / totalPages) * 100)),
-          details: JSON.stringify(lines)
+          details: JSON.stringify(lines),
+          cost: costTracker.getTotal()
         }));
       }
 

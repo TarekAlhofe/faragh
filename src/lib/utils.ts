@@ -231,3 +231,48 @@ export function encodeRFC5987ValueChars(filename: string) {
   return encodeURIComponent(filename)
     .replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
+
+// --- Cost tracking ---
+
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  "google/gemini-3.5-flash":          { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
+  "google/gemini-3.1-flash-lite":     { input: 0.10 / 1_000_000, output: 0.40 / 1_000_000 },
+  "google/gemini-2.5-pro":            { input: 1.25 / 1_000_000, output: 10.00 / 1_000_000 },
+  "google/gemini-2.5-flash":          { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
+};
+
+export function calculateCost(model: string, usage: { prompt_tokens?: number; completion_tokens?: number } | undefined): number {
+  if (!usage) return 0;
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) return 0;
+  return (usage.prompt_tokens ?? 0) * pricing.input + (usage.completion_tokens ?? 0) * pricing.output;
+}
+
+export function extractUsageFromResult(result: any): { model: string; usage: { prompt_tokens: number; completion_tokens: number } } | null {
+  if (!result) return null;
+  const model = result.model;
+  const usage = result.usage;
+  if (!model || !usage) return null;
+  return {
+    model,
+    usage: {
+      prompt_tokens: usage.prompt_tokens ?? 0,
+      completion_tokens: usage.completion_tokens ?? 0,
+    }
+  };
+}
+
+export function createCostTracker() {
+  let totalCost = 0;
+  return {
+    track(model: string, usage: { prompt_tokens?: number; completion_tokens?: number } | undefined) {
+      const cost = calculateCost(model, usage);
+      totalCost += cost;
+    },
+    getTotal(): number {
+      return Math.round(totalCost * 1_000_000) / 1_000_000; // round to 6 decimal places
+    }
+  };
+}
+
+export type CostTracker = ReturnType<typeof createCostTracker>;

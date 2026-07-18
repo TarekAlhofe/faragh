@@ -32,6 +32,7 @@ export async function GET(
     mode: state?.mode || "NAMES",
     stage: progress?.stage || "IDLE",
     progress: progress?.progress || 0,
+    cost: progress?.cost || 0,
     status: metadata.status || "idle"
   }, { status: 200 });
 }

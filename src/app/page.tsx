@@ -53,6 +53,7 @@ export default function Home() {
   const [currentProgress, setProgress] = useState<number>(0);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [progressDetails, setProgressDetails] = useState<LineRow[] | ForeignNameRow[] | null>(null);
+  const [sessionCost, setSessionCost] = useState<number>(0);
   const [selectedMode, setSelectedMode] = useState<SESSION_MODES | null>(SESSION_MODES.NAMES);
   const [pdfJs, setPdfJs] = useState<PDFJs | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -122,15 +123,17 @@ export default function Home() {
 
       try {
         const request = await fetch(`/api/sessions/${sessionId}/progress`);
-        const { stage, cursor, progress, details } = await request.json();
+        const { stage, cursor, progress, details, cost } = await request.json();
 
         if (stage === SESSION_STAGES.READY) {
           setProgressLabel(null);
           setProgress(0);
           setProgressDetails(null);
+          setSessionCost(0);
         } else {
           setPdfViewerCursor(cursor);
           setProgress(progress);
+          if (typeof cost === 'number') setSessionCost(cost);
         }
 
         if (stage === SESSION_STAGES.SCANNING) {
@@ -402,6 +405,7 @@ export default function Home() {
     setProgress(0);
     setProgressLabel(null);
     setProgressDetails(null);
+    setSessionCost(0);
     setTotalPages(0);
     setStartPage(1);
     setEndPage(0);
@@ -693,6 +697,11 @@ export default function Home() {
                       {progressLabel && <Spinner size={'sm'} />}
                       {progressLabel}
                     </HStack>
+                    {sessionCost > 0 && (
+                      <Text fontSize={{ base: 'xs', md: 'sm' }} color="gray.400">
+                        التكلفة: ${sessionCost.toFixed(4)}
+                      </Text>
+                    )}
                   </VStack>
                   <HStack dir="rtl" gap={5} flexDirection={{ base: 'column', sm: 'row' }} width={{ base: '100%', md: 'auto' }}>
                     <Button variant="surface" onClick={handleDownload} width={{ base: '100%', sm: 'auto' }}>
