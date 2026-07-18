@@ -2,9 +2,9 @@
   "name": "faragh",
   "version": "0.1.6",
   "scripts": {
-    "dev": "next dev -p 8080 -H 0.0.0.0 --turbo",
+    "dev": "next dev -H 0.0.0.0 --turbo",
     "build": "next build",
-    "start": "next start -p 8080 -H 0.0.0.0",
+    "start": "next start -H 0.0.0.0",
     "lint": "next lint",
     "docker": "docker compose up --build -w"
   },

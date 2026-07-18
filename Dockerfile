@@ -16,6 +16,7 @@ COPY . .
 RUN rm -rf .next
 RUN npm run build
 
-EXPOSE 8080
+ARG PORT=8080
+EXPOSE $PORT
 
 CMD ["npm", "start"]
