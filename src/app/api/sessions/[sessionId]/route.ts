@@ -293,6 +293,10 @@ export async function GET(
     });
   }
 
+  const metaRaw = await getRedis().hget('sessions:metadata', sessionId);
+  const meta = metaRaw ? JSON.parse(metaRaw) : {};
+  const docName = meta.filename?.replace(/\.pdf$/i, '') || 'output';
+
   let sheetFile: ForeignNameRow[];
   try {
     sheetFile = JSON.parse(sheetFileContent) as ForeignNameRow[];
@@ -310,8 +314,8 @@ export async function GET(
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${encodeURIComponent(
-        "test.xlsx"
-      )}"`,
+        docName
+      )}.xlsx"`,
     },
   });
 }
