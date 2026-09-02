@@ -17,6 +17,8 @@ async function updateSessionStatus(sessionId: string, status: string) {
 }
 
 async function validateLink(url: string, signal?: AbortSignal): Promise<string> {
+  if (url.includes("forvo.com/search/")) return url;
+
   try {
     const response = await fetch(url, { method: "HEAD", signal });
     return response.ok ? url : "Not Found";

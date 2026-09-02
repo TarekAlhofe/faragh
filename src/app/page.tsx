@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import {
   Box,
@@ -13,11 +13,7 @@ import {
   Spinner,
   Table,
   Text,
-  RadioCard,
-  Badge,
-  Drawer,
-  Portal,
-  CloseButton
+  RadioCard
 } from '@chakra-ui/react';
 import { Toaster, toaster } from '@/components/ui/toaster';
 import { FileUpload, Icon } from '@chakra-ui/react';
@@ -26,10 +22,7 @@ import Timer from '@/components/ui/timer';
 import { ForeignNameRow, LineRow, PDFJs, Session, SESSION_MODES, SESSION_STAGES } from '@/lib/types';
 import { filterSimilarEnglishNames } from '@/lib/utils';
 import PDFViewer from '@/components/ui/pdf-viewer';
-import nextJsVersion from 'next/package.json';
 import Script from 'next/script';
-import Sidebar from '@/components/Sidebar';
-import React from 'react';
 import { HistoryDrawer } from '@/components/ui/history-drawer';
 import { useDocumentsStore } from '@/lib/stores/documentsStore'
 import { useSessionsStore } from '@/lib/stores/sessionsStore';
@@ -56,9 +49,14 @@ export default function Home() {
   const [sessionCost, setSessionCost] = useState<number>(0);
   const [selectedMode, setSelectedMode] = useState<SESSION_MODES | null>(SESSION_MODES.NAMES);
   const [pdfJs, setPdfJs] = useState<PDFJs | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
   const documentsStore = useDocumentsStore();
   const sessionsStore = useSessionsStore();
+  const sessionsCache = useSessionsStore((state) => state.sessionsCache);
+  const cacheSession = useSessionsStore((state) => state.cacheSession);
+  const cacheSessions = useSessionsStore((state) => state.cacheSessions);
+  const clearSession = useSessionsStore((state) => state.clearSession);
+  const fetchAllSessions = useSessionsStore((state) => state.fetchAllSessions);
+  const sessions = useMemo(() => Object.values(sessionsCache), [sessionsCache]);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -86,6 +84,27 @@ export default function Home() {
     { value: SESSION_MODES.LINES, title: "الجمل" }
   ]
 
+
+  useEffect(() => {
+    if (sessions.length > 0) return;
+
+    (async () => {
+      const storedSessions = await fetchAllSessions();
+      if (storedSessions?.length) {
+        cacheSessions(storedSessions);
+      }
+    })();
+  }, [cacheSessions, fetchAllSessions, sessions.length]);
+
+  const updateSessionStatus = async (id: string, status: Session['status']) => {
+    const existingSession = sessions.find((session) => session.id === id) ?? await sessionsStore.getOneSession(id);
+    if (!existingSession) return;
+
+    cacheSession(id, {
+      ...existingSession,
+      status,
+    });
+  };
 
   // Rehydrate session once page is fully loaded.
   useEffect(() => {
@@ -417,7 +436,7 @@ export default function Home() {
     // If current session is a draft, clean it from the Map too
     if (sessionId && draftFiles.has(sessionId)) {
       draftFiles.delete(sessionId);
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      clearSession(sessionId);
     }
 
     resetLocalState();
@@ -427,7 +446,7 @@ export default function Home() {
   const handleDeleteSession = async (id: string) => {
     if (draftFiles.has(id)) {
       draftFiles.delete(id);
-      setSessions(prev => prev.filter(s => s.id !== id));
+      clearSession(id);
       if (id === sessionId) resetLocalState();
       toaster.create(
         { title: `تم مسح جلسة ${file?.name}`, type: 'success', duration: 3000 });
@@ -437,10 +456,7 @@ export default function Home() {
       const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete session');
 
-      setSessions(prev => {
-        console.log(prev);
-        return prev.filter(s => s.id !== id)
-      });
+      clearSession(id);
 
       if (id === sessionId) {
         handleReset();
@@ -509,7 +525,7 @@ export default function Home() {
             justifyContent={'flex-start'}>
             <HistoryDrawer
               sessionId={sessionId}
-              sessions={sessionsStore.getAllSessions()}
+              sessions={sessions}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
               onNewSession={handleReset} />

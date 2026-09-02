@@ -1,31 +1,28 @@
 "use client";
-import { Suspense, use, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   VStack,
   HStack,
   Text,
   Icon,
-  Spinner,
-  Badge,
   IconButton,
   Button,
   Skeleton
 } from '@chakra-ui/react';
 import { Session } from '@/lib/types';
-import { LuBook, LuHistory, LuPlus, LuBookPlus, LuTrash2 } from 'react-icons/lu';
+import { LuBook, LuHistory, LuBookPlus, LuTrash2 } from 'react-icons/lu';
 
 interface SidebarProps {
   currentSessionId: string | null;
-  sessions: Promise<Session[]>;
+  sessions: Session[];
+  isLoading?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onNewSession: () => void;
 }
 
-export default function Sidebar({ currentSessionId, sessions, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
-  const fetchedSessions = use(sessions);
-
+export default function Sidebar({ currentSessionId, sessions, isLoading = false, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
   return (
     <Box
       width={{ base: 'full', lg: '280px' }}
@@ -73,7 +70,7 @@ export default function Sidebar({ currentSessionId, sessions, onSelectSession, o
           '&::-webkit-scrollbar-thumb': { background: '#2D3748', borderRadius: '10px' },
         }}
       >
-        <Suspense fallback={
+        {isLoading ? (
           <>
             {Array.from({ length: 5 }).map((_, i) => (
               <Skeleton
@@ -84,8 +81,8 @@ export default function Sidebar({ currentSessionId, sessions, onSelectSession, o
               />
             ))}
           </>
-        }>
-          {fetchedSessions.map((session) => (
+        ) : (
+          sessions.map((session) => (
             <Box
               key={session.id}
               p={3}
@@ -156,8 +153,8 @@ export default function Sidebar({ currentSessionId, sessions, onSelectSession, o
                 </HStack>
               </VStack>
             </Box>
-          ))}
-        </Suspense>
+          ))
+        )}
       </VStack>
 
       <Box p={4} borderTop="1px solid" borderColor="gray.800">

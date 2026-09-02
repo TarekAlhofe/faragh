@@ -1,3 +1,5 @@
+"use client";
+
 import { Box, Button, CloseButton, Drawer, Portal } from "@chakra-ui/react";
 import { useState } from "react";
 import Sidebar from "../Sidebar";
@@ -8,12 +10,14 @@ import type { Session } from '@/lib/types';
 export const HistoryDrawer = React.memo(({
     sessionId,
     sessions,
+    isLoading,
     onSelectSession,
     onDeleteSession,
     onNewSession
 }: {
     sessionId: string | null;
-    sessions: Promise<Session[]>;
+    sessions: Session[];
+    isLoading?: boolean;
     onSelectSession: (id: string) => void;
     onDeleteSession: (id: string) => void;
     onNewSession: () => void;
@@ -46,6 +50,7 @@ export const HistoryDrawer = React.memo(({
                             <Sidebar
                                 currentSessionId={sessionId}
                                 sessions={sessions}
+                                isLoading={isLoading}
                                 onSelectSession={onSelectSession}
                                 onDeleteSession={onDeleteSession}
                                 onNewSession={onNewSession}

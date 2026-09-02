@@ -374,17 +374,15 @@ export async function useForeignNamesExtractor(sessionId: string, cachedSheet: F
     const lines: ForeignNameRow[] = responseObject.map(
       (line: Omit<ForeignNameRow, "رقم النص" | "رقم الصفحة">, index: number) => {
         const name = line["الإسم باللغة الأجنبية"];
-        const nameParts = name.split(' ');
-        const namePartOne = encodeURIComponent(nameParts[0]);
-        const namePartTwo = encodeURIComponent(nameParts[1]);
+        const encodedName = encodeURIComponent(name);
 
         return {
           ...line,
           ["رقم الصفحة"]: key,
           ["رقم النص"]: index + 1,
-          ["الرابط الأول"]: `https://youglish.com/pronounce/${encodeURIComponent(name)}`,
-          ["الرابط الثاني"]: namePartOne ? `https://youglish.com/pronounce/${namePartOne}` : "",
-          ["الرابط الثالث"]: namePartTwo ? `https://youglish.com/pronounce/${namePartTwo}` : "",
+          ["الرابط الأول"]: `https://youglish.com/pronounce/${encodedName}`,
+          ["الرابط الثاني"]: `https://howjsay.com/how-to-pronounce-${encodedName}`,
+          ["الرابط الثالث"]: `https://forvo.com/search/${encodedName}/`,
         }
 
       }
