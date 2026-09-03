@@ -10,7 +10,7 @@ declare global {
 }
 
 export type LineRow = Row & {
-  ['الشخصية']: string;
+  ['صاحب الصوت']: string;
   ['النص']: string;
   ['النبرة']: string;
   ['المكان']: string;
@@ -69,6 +69,7 @@ export type SessionProgress<T> = {
   cursor: number;
   progress: number;
   details: T;
+  cost: number;
 }
 
 export type Session = {
@@ -78,3 +79,29 @@ export type Session = {
   mode?: SESSION_MODES;
   status?: "processing" | "completed" | "error";
 };
+
+enum SESSION_STATUS {
+  NOT_STARTED = "Not Started",
+  PROCESSING = "Processing",
+  COMPLETED = "Completed",
+  FAILED = "Failed"
+}
+
+interface SessionDocument {
+  mimeType: string;
+  filename: string;
+}
+
+interface SessionSheet {
+  filename: string;
+  data: string;
+}
+
+interface _Session {
+  id: string;
+  createdAt: string;
+  mode: SESSION_MODES;
+  status: SESSION_STATUS;
+  document: SessionDocument;
+  sheet: SessionSheet;
+}

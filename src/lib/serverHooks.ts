@@ -5,8 +5,10 @@ import { ForeignNameRow, LineRow, Row } from '@/lib/types';
 import { ReadingMemory, tryCall } from "./utils";
 
 import { callAI, getAI, handleConversation } from "./ai";
+import { CostTracker, extractUsageFromResult } from "./utils";
 import { fromBuffer } from 'pdf2pic';
 import countPages from 'page-count';
+import { Scanner } from './scanner';
 
 export async function useScanner(
   pdf: File,
@@ -61,21 +63,134 @@ export async function useScanner(
   ];
 }
 
-export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[LineRow[], (key: number, image: string, previousResults?: any[]) => Promise<LineRow[]>]> {
+export async function useSpeakerLinesExtractor(
+  sessionId: string,
+  startingSheet: LineRow[],
+  startingSpeakers: string,
+  numberOfPages: number,
+  { readingMemoryLimit, costTracker }: { readingMemoryLimit: number; costTracker?: CostTracker } = { readingMemoryLimit: 10 }
+): Promise<[
+  LineRow[],
+  string,
+  (
+    key: number,
+    images: (pageNumber?: number) => Record<number, string> | string,
+    currentSpeakers: string
+  ) => Promise<{ lines: LineRow[]; updatedSpeakers: string }>
+]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
-  const sheet: LineRow[] = [];
-  const instructions = await fs.readFile(path.join('src/lib/prompts', 'sheetify.md'), 'utf-8');
+  const sheet: LineRow[] = startingSheet;
+  const speakerInstructionsTemplate = await fs.readFile(path.join('src/lib/prompts', 'charactering.md'), 'utf-8');
+  const sheetifyInstructionsTemplate = await fs.readFile(path.join('src/lib/prompts', 'sheetify.md'), 'utf-8');
 
-  async function extract(key: number, image: string, previousResults: any[] = []): Promise<LineRow[]> {
+  async function extract(
+    key: number,
+    images: (pageNumber?: number) => Record<number, string> | string,
+    currentSpeakers: string
+  ): Promise<{ lines: LineRow[]; updatedSpeakers: string }> {
+    // Step 1: Speaker Identification with surrounding page window [key - 3, key + 3]
+    const speakerInstructions = speakerInstructionsTemplate.replace('{{speakers}}', currentSpeakers);
+    const scanner = new Scanner(sessionId);
+    
+    const contentParts: any[] = [];
+    for (let p = Math.max(1, key - 3); p <= Math.min(numberOfPages, key + 3); p++) {
+      const img = images(p) as string;
+      if (img) {
+        const textContent = await scanner.scanImage(p, img);
+        contentParts.push({
+          type: "text",
+          text: `[Page ${p}]${p === key ? ' (This is the target page to extract speakers for)' : ''}\n${textContent}`
+        });
+      }
+    }
+    contentParts.push({
+      type: "text",
+      text: `الرجاء تحليل الصفحة المستهدفة (الصفحة رقم ${key}) واستخراج المتحدثين الفاعلين فيها، مستعيناً بالصفحات السابقة واللاحقة المرفقة كالسياق.`
+    });
 
-    const messages: any[] = [
-      { role: "system", content: instructions }
+    const charMessages: any[] = [
+      { role: "system", content: speakerInstructions },
+      {
+        role: 'user',
+        content: contentParts,
+      }
     ];
 
-    if (previousResults.length > 0) {
+    const charConfig = {
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "speakers_schema",
+          strict: true,
+          schema: {
+            type: "object",
+            required: ["characters"],
+            properties: {
+              characters: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["الاسم", "الوصف", "التصنيف"],
+                  properties: {
+                    "الاسم": { type: "string" },
+                    "الوصف": { type: "string" },
+                    "التصنيف": { type: "string", enum: ["رئيسية", "ثانوية", "مساندة/جماعية"] }
+                  },
+                  additionalProperties: false
+                }
+              }
+            },
+            additionalProperties: false
+          }
+        }
+      }
+    } as const;
+
+    const speakerModel = "deepseek/deepseek-v4-flash";
+    let charResult: any;
+    try {
+      charResult = await tryCall(async () => {
+        return await getAI().chat.completions.create({
+          model: speakerModel,
+          messages: charMessages,
+          ...charConfig,
+        });
+      });
+      const usageInfo = extractUsageFromResult(charResult);
+      if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
+    } catch (err) {
+      console.warn(`Model ${speakerModel} speaker extraction failed`, err);
+      throw err;
+    }
+
+    let updatedSpeakers = currentSpeakers;
+    const charMessageContent = charResult?.choices?.[0]?.message?.content;
+
+    if (charMessageContent) {
+      try {
+        const parsedChars = JSON.parse(charMessageContent);
+        if (parsedChars && Array.isArray(parsedChars.characters)) {
+          updatedSpeakers = parsedChars.characters
+            .map((c: any) => `${c["الاسم"]}: ${c["الوصف"]}. (${c["التصنيف"]})`)
+            .join("\n");
+        }
+      } catch (err) {
+        console.error("Failed to parse speakers list JSON output:", err);
+      }
+    }
+
+    // Step 2: Utterances Extraction (uses target page only)
+    const targetImage = images(key) as string;
+    const targetText = await scanner.scanImage(key, targetImage);
+    const sheetifyInstructions = sheetifyInstructionsTemplate.replace('{{speakers}}', updatedSpeakers);
+    const messages: any[] = [
+      { role: "system", content: sheetifyInstructions }
+    ];
+
+    if (sheet.length > 0) {
       messages.push({
         role: "user",
-        content: `Here are the results from previous pages for context (to maintain consistency and avoid duplicates):\n${JSON.stringify(previousResults.slice(-50))}`
+        content: `Here are the results from previous pages for context (to maintain consistency and avoid duplicates):\n${JSON.stringify(sheet.slice(-50))}`
       });
       messages.push({
         role: "assistant",
@@ -87,14 +202,8 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
       role: 'user',
       content: [
         {
-          type: "image_url",
-          image_url: {
-            url: `data:image/jpeg;base64,${image}`,
-          }
-        },
-        {
           type: "text",
-          text: "Please extract the data from this page according to the instructions."
+          text: "Please extract the data from this page according to the instructions:\n\n" + targetText
         }
       ],
     });
@@ -114,15 +223,15 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
                 items: {
                   type: "object",
                   required: [
-                    "الشخصية",
-                    "النص",
+                    "المتحدث",
+                    "العبارة",
                     "النبرة",
                     "المكان",
                     "الخلفية الصوتية",
                   ],
                   properties: {
-                    "الشخصية": { type: "string" },
-                    "النص": { type: "string" },
+                    "المتحدث": { type: "string" },
+                    "العبارة": { type: "string" },
                     "النبرة": { type: "string" },
                     "المكان": { type: "string" },
                     "الخلفية الصوتية": { type: "string" },
@@ -137,23 +246,22 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
       }
     } as const;
 
-    // Fallback between flash and flash-lite models on failure
-    const models = ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite"] as const;
+    const sheetifyModel = "deepseek/deepseek-v4-flash";
+
     let result: any;
-    for (const m of models) {
-      try {
-        result = await tryCall(async () => {
-          return await getAI().chat.completions.create({
-            model: m,
-            messages: messages,
-            ...config,
-          });
+    try {
+      result = await tryCall(async () => {
+        return await getAI().chat.completions.create({
+          model: sheetifyModel,
+          messages: messages,
+          ...config,
         });
-        break;
-      } catch (err) {
-        console.warn(`Model ${m} failed, trying next if available`, err);
-        if (m === models[models.length - 1]) throw err;
-      }
+      });
+      const usageInfo = extractUsageFromResult(result);
+      if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
+    } catch (err) {
+      console.warn(`Model ${sheetifyModel} lines extraction failed`, err);
+      throw err;
     }
     const responseObject = handleConversation(result, conversation);
 
@@ -166,7 +274,7 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
     );
 
     try {
-      sheet.push(...lines);
+      sheet.push(...lines.sort((a, b) => (a['رقم الصفحة'] - b['رقم الصفحة']) || (a['رقم النص'] - b['رقم النص'])));
     } catch (err) {
       console.error(
         "Failed to parse assistant response:",
@@ -175,19 +283,21 @@ export async function useSheeter({ readingMemoryLimit }: { readingMemoryLimit: n
       );
     }
 
-    return lines;
+    return { lines, updatedSpeakers };
 
   }
 
-  return [sheet, extract] as const;
+  return [sheet, startingSpeakers, extract] as const;
 }
 
-export async function useForeignNamesExtractor({ readingMemoryLimit }: { readingMemoryLimit: number } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
+export async function useForeignNamesExtractor(sessionId: string, cachedSheet: ForeignNameRow[], { readingMemoryLimit, costTracker }: { readingMemoryLimit: number; costTracker?: CostTracker } = { readingMemoryLimit: 10 }): Promise<[ForeignNameRow[], (key: number, image: string, previousResults?: any[]) => Promise<ForeignNameRow[]>]> {
   const conversation: ReadingMemory = new ReadingMemory(readingMemoryLimit ?? 1);
-  const sheet: ForeignNameRow[] = [];
+  const sheet: ForeignNameRow[] = cachedSheet;
   const instructions = await fs.readFile(path.join('src/lib/prompts', 'foreign-name-extraction.md'), 'utf-8');
 
   async function extract(key: number, image: string, previousResults: any[] = []): Promise<ForeignNameRow[]> {
+    const scanner = new Scanner(sessionId);
+    const targetText = await scanner.scanImage(key, image);
 
     const messages: any[] = [
       { role: "system", content: instructions }
@@ -208,14 +318,8 @@ export async function useForeignNamesExtractor({ readingMemoryLimit }: { reading
       role: 'user',
       content: [
         {
-          type: "image_url",
-          image_url: {
-            url: `data:image/png;base64,${image}`,
-          }
-        },
-        {
           type: "text",
-          text: "Please extract the names from this page according to the instructions."
+          text: "Please extract the names from this page according to the instructions:\n\n" + targetText
         }
       ],
     });
@@ -254,7 +358,7 @@ export async function useForeignNamesExtractor({ readingMemoryLimit }: { reading
       }
     } as const;
 
-    const model = "google/gemini-2.5-flash";
+    const model = "deepseek/deepseek-v4-flash";
 
     const result = await tryCall(async () => {
       return await getAI().chat.completions.create({
@@ -263,22 +367,22 @@ export async function useForeignNamesExtractor({ readingMemoryLimit }: { reading
         ...config,
       });
     });
+    const usageInfo = extractUsageFromResult(result);
+    if (usageInfo && costTracker) costTracker.track(usageInfo.model, usageInfo.usage);
     const responseObject = handleConversation(result, conversation);
 
     const lines: ForeignNameRow[] = responseObject.map(
       (line: Omit<ForeignNameRow, "رقم النص" | "رقم الصفحة">, index: number) => {
         const name = line["الإسم باللغة الأجنبية"];
-        const nameParts = name.split(' ');
-        const namePartOne = encodeURIComponent(nameParts[0]);
-        const namePartTwo = encodeURIComponent(nameParts[1]);
+        const encodedName = encodeURIComponent(name);
 
         return {
           ...line,
           ["رقم الصفحة"]: key,
           ["رقم النص"]: index + 1,
-          ["الرابط الأول"]: `https://youglish.com/pronounce/${encodeURIComponent(name)}`,
-          ["الرابط الثاني"]: namePartOne ? `https://youglish.com/pronounce/${namePartOne}` : "",
-          ["الرابط الثالث"]: namePartTwo ? `https://youglish.com/pronounce/${namePartTwo}` : "",
+          ["الرابط الأول"]: `https://youglish.com/pronounce/${encodedName}`,
+          ["الرابط الثاني"]: `https://howjsay.com/how-to-pronounce-${encodedName}`,
+          ["الرابط الثالث"]: `https://forvo.com/search/${encodedName}/`,
         }
 
       }

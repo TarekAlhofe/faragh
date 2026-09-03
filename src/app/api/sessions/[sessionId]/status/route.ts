@@ -16,7 +16,7 @@ export async function GET(
   const progressData = await getRedis().get(`${sessionId}/progress`);
   const metadataRaw = await getRedis().hget('sessions:metadata', sessionId);
 
-  if (!sheetData && !stateData && !metadataRaw) {
+  if (!progressData) {
     return NextResponse.json({ error: "Session not found - status/route.ts" }, { status: 404 });
   }
 
@@ -32,6 +32,7 @@ export async function GET(
     mode: state?.mode || "NAMES",
     stage: progress?.stage || "IDLE",
     progress: progress?.progress || 0,
+    cost: progress?.cost || 0,
     status: metadata.status || "idle"
   }, { status: 200 });
 }

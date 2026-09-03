@@ -6,25 +6,23 @@ import {
   HStack,
   Text,
   Icon,
-  Spinner,
-  Badge,
   IconButton,
-  Button
+  Button,
+  Skeleton
 } from '@chakra-ui/react';
 import { Session } from '@/lib/types';
-import { LuBook, LuHistory, LuPlus, LuBookPlus, LuTrash2 } from 'react-icons/lu';
+import { LuBook, LuHistory, LuBookPlus, LuTrash2 } from 'react-icons/lu';
 
 interface SidebarProps {
   currentSessionId: string | null;
   sessions: Session[];
-  isLoading: boolean;
+  isLoading?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onNewSession: () => void;
 }
 
-export default function Sidebar({ currentSessionId, sessions, isLoading, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
-
+export default function Sidebar({ currentSessionId, sessions, isLoading = false, onSelectSession, onDeleteSession, onNewSession }: SidebarProps) {
   return (
     <Box
       width={{ base: 'full', lg: '280px' }}
@@ -73,13 +71,16 @@ export default function Sidebar({ currentSessionId, sessions, isLoading, onSelec
         }}
       >
         {isLoading ? (
-          <VStack py={10}>
-            <Spinner size="sm" color="blue.400" />
-          </VStack>
-        ) : sessions.length === 0 ? (
-          <Text fontSize="sm" color="gray.500" textAlign="center" py={10}>
-            لا توجد سجلات بعد
-          </Text>
+          <>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton
+                key={i}
+                h={20}
+                rounded="md"
+                caretColor="whiteAlpha.100"
+              />
+            ))}
+          </>
         ) : (
           sessions.map((session) => (
             <Box
